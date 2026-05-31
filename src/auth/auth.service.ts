@@ -4,6 +4,7 @@ import { RegisterDto } from "./dto/register.dto";
 import { PrismaService } from "../prisma/prisma.service";
 import * as crypto from "crypto";
 import Redis from "ioredis";
+import { VerifyOtpDto } from "./dto/verify-otp.dto";
 
 @Injectable()
 export class AuthService {
@@ -49,4 +50,58 @@ export class AuthService {
     };
 
   }
+
+  async verifyOtp(dto: VerifyOtpDto) {
+    const redisKey = `otp:user:${dto.userId}`;
+
+    const storeHashOtp = await this.redis.get(redisKey);
+
+    if(!storeHashOtp){
+       throw new BadRequestException("OTP has expired or invalid user ID")
+    }
+
+    const clientHashOtp = crypto.createHash('sha256').update(dto.otp).digest('hex');
+
+    if (storeHashOtp !== clientHashOtp){
+      throw new BadRequestException('Invalid OTP code')
+    }
+
+    await this.prisma.user.update({
+      where: {id: dto.userId},
+      data: {isVerified: true}
+    });
+
+    await this.redis.del(redisKey);
+
+    return {
+      success: true,
+      message: 'Account successfully verified. You can now log in'
+    }
+  }
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

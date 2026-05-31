@@ -7,16 +7,21 @@ import {
 } from "@nestjs/common";
 import { RegisterDto } from "./dto/register.dto";
 import { AuthService } from "./auth.service";
+import { VerifyOtpDto } from "./dto/verify-otp.dto";
 
 @Controller()
-export class AuthController{
+export class AuthController {
+  constructor(private readonly authService: AuthService) {}
 
-  constructor(private readonly authService:AuthService) {
+  @Post("register")
+  @UsePipes(new ValidationPipe({ whitelist: true }))
+  async register(@Body() dto: RegisterDto) {
+    return this.authService.register(dto);
   }
-  
-  @Post('register')
-  @UsePipes(new ValidationPipe({whitelist: true}))
-  async register(@Body() dto: RegisterDto){
-    return this.authService.register(dto)
+
+  @Post("verify-otp")
+  @UsePipes(new ValidationPipe({ whitelist: true }))
+  async verifyOtp(@Body() dto: VerifyOtpDto) {
+    return this.authService.verifyOtp(dto);
   }
 }
