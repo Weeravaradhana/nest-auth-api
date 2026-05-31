@@ -1,17 +1,26 @@
-import { BadRequestException, Inject, Injectable } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable, UnauthorizedException } from "@nestjs/common";
 import * as bcrypt from 'bcrypt'
 import { RegisterDto } from "./dto/register.dto";
 import { PrismaService } from "../prisma/prisma.service";
 import * as crypto from "crypto";
 import Redis from "ioredis";
 import { VerifyOtpDto } from "./dto/verify-otp.dto";
+import { LoginDto } from "./dto/login.dto";
+import { JwtService } from "@nestjs/jwt";
+import { TokenGenerateDto } from "./dto/token-generate.dto";
+import { StringValue } from "ms";
+import { RefreshTokenDto } from "./dto/refresh-token.dto";
+import e from "express";
+
 
 @Injectable()
 export class AuthService {
 
   constructor(
     private prisma: PrismaService,
-    @Inject('REDIS_CLIENT') private readonly redis: Redis) {}
+    @Inject('REDIS_CLIENT') private readonly redis: Redis,
+    private jwtService: JwtService) {}
+
 
   async register(dto: RegisterDto){
     const existingUser= await this.prisma.user.findUnique({
@@ -52,6 +61,7 @@ export class AuthService {
   }
 
   async verifyOtp(dto: VerifyOtpDto) {
+
     const redisKey = `otp:user:${dto.userId}`;
 
     const storeHashOtp = await this.redis.get(redisKey);
@@ -79,7 +89,136 @@ export class AuthService {
     }
   }
 
+  async generateToken(dto: TokenGenerateDto){
+    const payload = {
+      sub: dto.email,
+      email: dto.email,
+      role: dto.role
+    };
+
+    const accessToken = await this.jwtService.signAsync(payload, {
+      secret: process.env.JWT_ACCESS_SECRET!,
+      expiresIn: (process.env.JWT_ACCESS_EXPIRATION as StringValue) || "15ms",
+    });
+
+    const rawRefreshToken = crypto.randomBytes(40).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(rawRefreshToken).digest('hex');
+
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7);
+
+   await this.prisma.refeshToken.create({
+     data: {
+       token: tokenHash,
+       userId: dto.userId,
+       expiresAt
+     }
+   });
+
+   return {
+     accessToken,
+     refreshToke: rawRefreshToken
+   }
+
+  }
+
+  async login(dto: LoginDto){
+     const user = await this.prisma.user.findUnique({
+       where: {email: dto.email}
+     });
+
+     if (!user){
+       throw new UnauthorizedException('Invalid email or password')
+     }
+
+     if (!user.isVerified) {
+       throw new BadRequestException("Please verify your email via OTP before logging in",);
+     }
+
+     const isPasswordMatch = await bcrypt.compare(dto.password,user.passwordHash)
+
+     if(!isPasswordMatch){
+       throw new UnauthorizedException("Invalid email or password");
+     }
+
+     const tokenCreateDetails: TokenGenerateDto = {
+       userId: user.id,
+       email:user.email,
+       role: user.role
+     }
+     const tokens =  await this.generateToken(tokenCreateDetails);
+
+     return {
+       message: 'Login successful',
+       ...tokens,
+       user: {
+         id: user.id,
+         email: user.email,
+         role: user.role
+       }
+
+     }
+  }
+
+  async refreshToken(dto: RefreshTokenDto){
+    const incomingTokenHash = await crypto.createHash('sha256').update(dto.refreshToken).digest('hex');
+
+    const existingToken = await this.prisma.refeshToken.findUnique({
+      where: {token: incomingTokenHash}
+    });
+
+    if(!existingToken || existingToken.isRevoked || existingToken.expiresAt < new Date()){
+      await this.prisma.user.deleteMany({
+        where: {id: dto.userId}
+      });
+
+      throw new UnauthorizedException('Security Alert: Token reuse detected or expired.All session revoke.')
+    }
+
+    await this.prisma.refeshToken.delete({
+      where: {id: existingToken.id}
+    });
+
+    const selectedUser =await this.prisma.user.findUnique({
+      where: {id: dto.userId}
+    });
+
+    if (!selectedUser) throw new UnauthorizedException('User not found');
+
+    const tokenCreateDetails: TokenGenerateDto = {
+      userId: selectedUser.id,
+      email: selectedUser.email,
+      role: selectedUser.role
+    };
+
+    const generatedTokens = await this.generateToken(tokenCreateDetails);
+
+    return {
+      message: 'Token rotated successfully',
+      ...generatedTokens
+    }
+  }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
