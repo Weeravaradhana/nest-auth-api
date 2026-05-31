@@ -9,6 +9,8 @@ import { LoginDto } from "./dto/login.dto";
 import { JwtService } from "@nestjs/jwt";
 import { TokenGenerateDto } from "./dto/token-generate.dto";
 import { StringValue } from "ms";
+import { RefreshTokenDto } from "./dto/refresh-token.dto";
+import e from "express";
 
 
 @Injectable()
@@ -158,7 +160,44 @@ export class AuthService {
      }
   }
 
+  async refreshToken(dto: RefreshTokenDto){
+    const incomingTokenHash = await crypto.createHash('sha256').update(dto.refreshToken).digest('hex');
 
+    const existingToken = await this.prisma.refeshToken.findUnique({
+      where: {token: incomingTokenHash}
+    });
+
+    if(!existingToken || existingToken.isRevoked || existingToken.expiresAt < new Date()){
+      await this.prisma.user.deleteMany({
+        where: {id: dto.userId}
+      });
+
+      throw new UnauthorizedException('Security Alert: Token reuse detected or expired.All session revoke.')
+    }
+
+    await this.prisma.refeshToken.delete({
+      where: {id: existingToken.id}
+    });
+
+    const selectedUser =await this.prisma.user.findUnique({
+      where: {id: dto.userId}
+    });
+
+    if (!selectedUser) throw new UnauthorizedException('User not found');
+
+    const tokenCreateDetails: TokenGenerateDto = {
+      userId: selectedUser.id,
+      email: selectedUser.email,
+      role: selectedUser.role
+    };
+
+    const generatedTokens = await this.generateToken(tokenCreateDetails);
+
+    return {
+      message: 'Token rotated successfully',
+      ...generatedTokens
+    }
+  }
 }
 
 
