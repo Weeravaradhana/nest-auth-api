@@ -2,6 +2,8 @@ import {
   Body,
   Controller,
   Post,
+  Req,
+  UseGuards,
   UsePipes,
   ValidationPipe,
 } from "@nestjs/common";
@@ -10,6 +12,9 @@ import { AuthService } from "./auth.service";
 import { VerifyOtpDto } from "./dto/verify-otp.dto";
 import { LoginDto } from "./dto/login.dto";
 import { RefreshTokenDto } from "./dto/refresh-token.dto";
+import { JwtAuthGuard } from "./guards/jwt-auth.guard";
+import { GetUser } from "./decorators/get-user.decorator";
+import express from "express";
 
 @Controller()
 export class AuthController {
@@ -37,5 +42,14 @@ export class AuthController {
   @UsePipes(new ValidationPipe({ whitelist: true }))
   async refreshToken(@Body() dto: RefreshTokenDto) {
     return this.authService.refreshToken(dto);
+  }
+
+  @Post("logout")
+  @UseGuards(JwtAuthGuard)
+  @UsePipes(new ValidationPipe({ whitelist: true }))
+  async logout(@Body() dto: RefreshTokenDto, @Req() req: express.Request, @GetUser() jwtPayload: any) {
+
+   const accessToken = req.headers.authorization!.split('')[1];
+   return this.authService.logout(dto.refreshToken, accessToken, jwtPayload);
   }
 }
