@@ -10,7 +10,7 @@ import { JwtService } from "@nestjs/jwt";
 import { TokenGenerateDto } from "./dto/token-generate.dto";
 import { StringValue } from "ms";
 import { RefreshTokenDto } from "./dto/refresh-token.dto";
-import e from "express";
+
 
 
 @Injectable()
@@ -197,6 +197,51 @@ export class AuthService {
       message: 'Token rotated successfully',
       ...generatedTokens
     }
+  }
+
+  async logout(refreshToken: string, accessToken: string, jwtPayload: any){
+     const tokenHash = crypto
+       .createHash("sha256")
+       .update(refreshToken)
+       .digest("hex");
+
+     const existingToken =  await this.prisma.refeshToken.findUnique({
+       where: {token: tokenHash}
+     });
+
+     if (existingToken){
+       await this.prisma.refeshToken.delete({
+         where: {id: existingToken.id}
+       })
+     }
+
+     const currentTimeInSecond = Math.floor(Date.now()/1000);
+     const remainingTTL = jwtPayload.exp - currentTimeInSecond;
+
+     if(remainingTTL > 0){
+       await this.redis.set(
+           `blacklist:${accessToken}`,
+         'revoked',
+         'EX',
+         remainingTTL
+       );
+     }
+
+    return {
+      success: true,
+      message: "Logged out successfully. Tokens invalidated.",
+    };
+  }
+
+  async logoutAll(userId: string){
+    await this.prisma.refeshToken.deleteMany({
+      where: {userId}
+    });
+
+    return {
+      success: true,
+      message: "Logged out successfully from all devices.",
+    };
   }
 }
 
